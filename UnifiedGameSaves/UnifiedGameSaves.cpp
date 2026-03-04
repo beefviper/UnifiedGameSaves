@@ -5,10 +5,28 @@
 #include "UnifiedGameSaves.h"
 #include <commctrl.h>
 #include <windowsx.h>
+#include <shlobj.h>
+#include <string>
+#include <vector>
+#include <fstream>
+#include <sstream>
 
 #pragma comment(lib, "comctl32.lib")
 
 #define MAX_LOADSTRING 100
+
+// Data structure for a game entry
+struct GameEntry
+{
+    std::wstring name;
+    std::wstring savePath;
+    std::wstring newPath;
+    bool hidden;
+};
+
+// Global vector to store game entries
+std::vector<GameEntry> games;
+const wchar_t* SAVES_FILE = L"UnifiedGameSaves.txt";
 
 // Global Variables:
 HINSTANCE hInst;                                // current instance
@@ -21,46 +39,90 @@ ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK    AddGameDlg(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK    RemoveGameDlg(HWND, UINT, WPARAM, LPARAM);
 
-int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
-                     _In_opt_ HINSTANCE hPrevInstance,
-                     _In_ LPWSTR    lpCmdLine,
-                     _In_ int       nCmdShow)
+// Helper functions
+void LoadGamesFromFile();
+void SaveGamesToFile();
+void RefreshListView();
+void AddGameToListView(const GameEntry& entry);
+
+// Implementation of helper functions
+void LoadGamesFromFile()
 {
-    UNREFERENCED_PARAMETER(hPrevInstance);
-    UNREFERENCED_PARAMETER(lpCmdLine);
+    games.clear();
+    std::wifstream file(SAVES_FILE);
+    if (!file.is_open()) return;
 
-    // TODO: Place code here.
-
-    // Initialize global strings
-    LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
-    LoadStringW(hInstance, IDC_UNIFIEDGAMESAVES, szWindowClass, MAX_LOADSTRING);
-    MyRegisterClass(hInstance);
-
-    // Perform application initialization:
-    if (!InitInstance (hInstance, nCmdShow))
+    std::wstring line;
+    while (std::getline(file, line))
     {
-        return FALSE;
-    }
-
-    HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_UNIFIEDGAMESAVES));
-
-    MSG msg;
-
-    // Main message loop:
-    while (GetMessage(&msg, nullptr, 0, 0))
-    {
-        if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg))
+        if (line.empty()) continue;
+        
+        std::wistringstream iss(line);
+        std::wstring name, savePath, newPath, hiddenStr;
+        
+        if (std::getline(iss, name, L'|') && 
+            std::getline(iss, savePath, L'|') &&
+            std::getline(iss, newPath, L'|') &&
+            std::getline(iss, hiddenStr))
         {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            GameEntry entry;
+            entry.name = name;
+            entry.savePath = savePath;
+            entry.newPath = newPath;
+            entry.hidden = (hiddenStr == L"1");
+            games.push_back(entry);
         }
     }
-
-    return (int) msg.wParam;
+    file.close();
 }
 
+void SaveGamesToFile()
+{
+    std::wofstream file(SAVES_FILE);
+    for (const auto& entry : games)
+    {
+        file << entry.name << L"|" 
+             << entry.savePath << L"|" 
+             << entry.newPath << L"|" 
+             << (entry.hidden ? L"1" : L"0") << L"\n";
+    }
+    file.close();
+}
 
+void RefreshListView()
+{
+    ListView_DeleteAllItems(hListView);
+    for (const auto& entry : games)
+    {
+        AddGameToListView(entry);
+    }
+}
+
+void AddGameToListView(const GameEntry& entry)
+{
+    int index = ListView_GetItemCount(hListView);
+    LVITEMW item = { 0 };
+    item.mask = LVIF_TEXT;
+    item.iItem = index;
+    item.iSubItem = 0;
+    item.pszText = const_cast<LPWSTR>(entry.name.c_str());
+    ListView_InsertItem(hListView, &item);
+
+    item.iSubItem = 1;
+    item.pszText = const_cast<LPWSTR>(entry.savePath.c_str());
+    ListView_SetItem(hListView, &item);
+
+    item.iSubItem = 2;
+    item.pszText = const_cast<LPWSTR>(entry.newPath.c_str());
+    ListView_SetItem(hListView, &item);
+
+    item.iSubItem = 3;
+    item.pszText = const_cast<LPWSTR>(entry.hidden ? L"Yes" : L"No");
+    ListView_SetItem(hListView, &item);
+}
 
 //
 //  FUNCTION: MyRegisterClass()
@@ -149,6 +211,10 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    lvc.pszText = const_cast<LPWSTR>(L"Hidden");
    ListView_InsertColumn(hListView, 3, &lvc);
 
+   // Load games from file
+   LoadGamesFromFile();
+   RefreshListView();
+
    ShowWindow(hWnd, nCmdShow);
    UpdateWindow(hWnd);
 
@@ -177,6 +243,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             {
             case IDM_ABOUT:
                 DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
+                break;
+            case IDM_GAME_ADD:
+                DialogBox(hInst, MAKEINTRESOURCE(IDD_ADDGAME), hWnd, AddGameDlg);
+                break;
+            case IDM_GAME_REMOVE:
+                DialogBox(hInst, MAKEINTRESOURCE(IDD_REMOVEGAME), hWnd, RemoveGameDlg);
                 break;
             case IDM_EXIT:
                 DestroyWindow(hWnd);
@@ -231,4 +303,160 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     }
     return (INT_PTR)FALSE;
+}
+
+// Message handler for add game dialog.
+INT_PTR CALLBACK AddGameDlg(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    UNREFERENCED_PARAMETER(lParam);
+    switch (message)
+    {
+    case WM_INITDIALOG:
+        return (INT_PTR)TRUE;
+
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDOK)
+        {
+            wchar_t nameBuffer[256] = { 0 };
+            wchar_t savePathBuffer[256] = { 0 };
+            wchar_t newPathBuffer[256] = { 0 };
+
+            GetDlgItemTextW(hDlg, IDC_NAME_INPUT, nameBuffer, 256);
+            GetDlgItemTextW(hDlg, IDC_SAVEPATH_INPUT, savePathBuffer, 256);
+            GetDlgItemTextW(hDlg, IDC_NEWPATH_INPUT, newPathBuffer, 256);
+            BOOL isHidden = IsDlgButtonChecked(hDlg, IDC_HIDDEN_CHECK);
+
+            if (wcslen(nameBuffer) == 0)
+            {
+                MessageBoxW(hDlg, L"Please enter a game name.", L"Error", MB_OK | MB_ICONERROR);
+                return (INT_PTR)FALSE;
+            }
+
+            GameEntry entry;
+            entry.name = nameBuffer;
+            entry.savePath = savePathBuffer;
+            entry.newPath = newPathBuffer;
+            entry.hidden = (isHidden == BST_CHECKED);
+
+            games.push_back(entry);
+            SaveGamesToFile();
+            RefreshListView();
+
+            EndDialog(hDlg, IDOK);
+            return (INT_PTR)TRUE;
+        }
+        else if (LOWORD(wParam) == IDCANCEL)
+        {
+            EndDialog(hDlg, IDCANCEL);
+            return (INT_PTR)TRUE;
+        }
+        break;
+    }
+    return (INT_PTR)FALSE;
+}
+
+// Message handler for remove game dialog.
+INT_PTR CALLBACK RemoveGameDlg(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_INITDIALOG:
+        {
+            HWND hList = GetDlgItem(hDlg, IDC_GAME_LIST);
+            ListView_SetExtendedListViewStyle(hList, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+
+            // Add a single column that fills the width
+            RECT rc;
+            GetClientRect(hList, &rc);
+            LVCOLUMNW lvc = { 0 };
+            lvc.mask = LVCF_FMT | LVCF_WIDTH;
+            lvc.fmt = LVCFMT_LEFT;
+            lvc.cx = rc.right - rc.left;
+            ListView_InsertColumn(hList, 0, &lvc);
+
+            // Populate with game names
+            for (size_t i = 0; i < games.size(); ++i)
+            {
+                LVITEMW item = { 0 };
+                item.mask = LVIF_TEXT;
+                item.iItem = (int)i;
+                item.pszText = const_cast<LPWSTR>(games[i].name.c_str());
+                ListView_InsertItem(hList, &item);
+            }
+        }
+        return (INT_PTR)TRUE;
+
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDOK)
+        {
+            HWND hList = GetDlgItem(hDlg, IDC_GAME_LIST);
+            std::vector<int> selectedIndices;
+            int itemCount = ListView_GetItemCount(hList);
+
+            for (int i = 0; i < itemCount; ++i)
+            {
+                if (ListView_GetCheckState(hList, i))
+                {
+                    selectedIndices.push_back(i);
+                }
+            }
+
+            // Remove in reverse order to avoid index shifting
+            for (int i = (int)selectedIndices.size() - 1; i >= 0; --i)
+            {
+                games.erase(games.begin() + selectedIndices[i]);
+            }
+
+            SaveGamesToFile();
+            RefreshListView();
+
+            EndDialog(hDlg, IDOK);
+            return (INT_PTR)TRUE;
+        }
+        else if (LOWORD(wParam) == IDCANCEL)
+        {
+            EndDialog(hDlg, IDCANCEL);
+            return (INT_PTR)TRUE;
+        }
+        break;
+    }
+    return (INT_PTR)FALSE;
+}
+
+int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
+                     _In_opt_ HINSTANCE hPrevInstance,
+                     _In_ LPWSTR    lpCmdLine,
+                     _In_ int       nCmdShow)
+{
+    UNREFERENCED_PARAMETER(hPrevInstance);
+    UNREFERENCED_PARAMETER(lpCmdLine);
+
+    // TODO: Place code here.
+
+    // Initialize global strings
+    LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
+    LoadStringW(hInstance, IDC_UNIFIEDGAMESAVES, szWindowClass, MAX_LOADSTRING);
+    MyRegisterClass(hInstance);
+
+    // Perform application initialization:
+    if (!InitInstance (hInstance, nCmdShow))
+    {
+        return FALSE;
+    }
+
+    HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_UNIFIEDGAMESAVES));
+
+    MSG msg;
+
+    // Main message loop:
+    while (GetMessage(&msg, nullptr, 0, 0))
+    {
+        if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg))
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
+
+    return (int) msg.wParam;
 }

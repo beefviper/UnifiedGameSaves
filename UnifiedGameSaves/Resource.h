@@ -7,12 +7,21 @@
 #define IDR_MAINFRAME			128
 #define IDD_UNIFIEDGAMESAVES_DIALOG	102
 #define IDD_ABOUTBOX			103
-#define IDM_ABOUT				104
-#define IDM_EXIT				105
-#define IDI_UNIFIEDGAMESAVES			107
-#define IDI_SMALL				108
-#define IDC_UNIFIEDGAMESAVES			109
+#define IDD_ADDGAME				104
+#define IDD_REMOVEGAME			105
+#define IDM_ABOUT				106
+#define IDM_EXIT				107
+#define IDM_GAME_ADD			108
+#define IDM_GAME_REMOVE			109
+#define IDI_UNIFIEDGAMESAVES			110
+#define IDI_SMALL				111
+#define IDC_UNIFIEDGAMESAVES			112
 #define IDC_LISTVIEW                   1001
+#define IDC_NAME_INPUT             1002
+#define IDC_SAVEPATH_INPUT         1003
+#define IDC_NEWPATH_INPUT          1004
+#define IDC_HIDDEN_CHECK           1005
+#define IDC_GAME_LIST              1006
 #define IDC_MYICON				2
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1

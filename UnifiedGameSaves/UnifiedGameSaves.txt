@@ -1,0 +1,2 @@
+Test Game|C:\TestGame|C:\MyGames\TestGame|1
+Test Game 2|C:\TestGame2|C:\MyGames\Test Game 2|0
