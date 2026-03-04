@@ -402,9 +402,60 @@ INT_PTR CALLBACK RemoveGameDlg(HWND hDlg, UINT message, WPARAM wParam, LPARAM lP
                 }
             }
 
+            // Process removals in reverse order to maintain correct indices
             for (int i = (int)selectedIndices.size() - 1; i >= 0; --i)
             {
-                games.erase(games.begin() + selectedIndices[i]);
+                int gameIndex = selectedIndices[i];
+                GameEntry& entry = games[gameIndex];
+
+                // If junction is active, deactivate it first
+                if (entry.junctionActive)
+                {
+                    if (IsJunction(entry.savePath))
+                    {
+                        // Remove junction
+                        std::wstring cmdLine = L"cmd.exe /C rmdir \"" + entry.savePath + L"\"";
+
+                        STARTUPINFOW si{};
+                        PROCESS_INFORMATION pi{};
+                        si.cb = sizeof(si);
+                        si.dwFlags = STARTF_USESHOWWINDOW;
+                        si.wShowWindow = SW_HIDE;
+
+                        if (CreateProcessW(nullptr, const_cast<LPWSTR>(cmdLine.c_str()), nullptr, nullptr, FALSE,
+                            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+                        {
+                            WaitForSingleObject(pi.hProcess, INFINITE);
+                            CloseHandle(pi.hProcess);
+                            CloseHandle(pi.hThread);
+                        }
+
+                        // Recreate the original directory
+                        if (PathExists(entry.newPath))
+                        {
+                            CreateDirectoryW(entry.savePath.c_str(), nullptr);
+                            
+                            // Move contents back from new path to save path
+                            MoveDirectoryContents(entry.newPath, entry.savePath);
+                            
+                            // Remove hidden attribute if it was hidden
+                            if (entry.hidden)
+                            {
+                                DWORD attribs = GetFileAttributesW(entry.savePath.c_str());
+                                if (attribs != INVALID_FILE_ATTRIBUTES)
+                                {
+                                    SetFileAttributesW(entry.savePath.c_str(), attribs & ~FILE_ATTRIBUTE_HIDDEN);
+                                }
+                            }
+                            
+                            // Clean up the new path directory
+                            RemoveDirectoryW(entry.newPath.c_str());
+                        }
+                    }
+                }
+
+                // Remove the game from the list
+                games.erase(games.begin() + gameIndex);
             }
 
             SaveGamesToFile();
