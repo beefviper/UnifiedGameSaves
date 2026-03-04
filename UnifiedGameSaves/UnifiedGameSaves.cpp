@@ -49,6 +49,7 @@ void SaveGamesToFile();
 void RefreshListView();
 void AddGameToListView(const GameEntry& entry);
 std::wstring BrowseForFolder(HWND hwndOwner, const wchar_t* lpszTitle);
+bool PathExists(const std::wstring& path);
 
 // Implementation of helper functions
 void LoadGamesFromFile()
@@ -148,6 +149,13 @@ std::wstring BrowseForFolder(HWND hwndOwner, const wchar_t* lpszTitle)
     return result;
 }
 
+bool PathExists(const std::wstring& path)
+{
+    if (path.empty()) return false;
+    DWORD attribs = GetFileAttributesW(path.c_str());
+    return (attribs != INVALID_FILE_ATTRIBUTES && (attribs & FILE_ATTRIBUTE_DIRECTORY));
+}
+
 //
 //  FUNCTION: MyRegisterClass()
 //
@@ -208,7 +216,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    }
 
    // Enable grid lines
-   ListView_SetExtendedListViewStyle(hListView, LVS_EX_GRIDLINES);
+   ListView_SetExtendedListViewStyle(hListView, LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
 
    // Initialize the ListView with columns
    LVCOLUMNW lvc = { 0 };
@@ -279,6 +287,56 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 break;
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
+            }
+        }
+        break;
+    case WM_NOTIFY:
+        {
+            LPNMHDR pnmhdr = (LPNMHDR)lParam;
+            if (pnmhdr->idFrom == IDC_LISTVIEW && pnmhdr->code == NM_CUSTOMDRAW)
+            {
+                LPNMLVCUSTOMDRAW lplvcd = (LPNMLVCUSTOMDRAW)lParam;
+                switch (lplvcd->nmcd.dwDrawStage)
+                {
+                case CDDS_PREPAINT:
+                    return CDRF_NOTIFYITEMDRAW;
+                case CDDS_ITEMPREPAINT:
+                    return CDRF_NOTIFYSUBITEMDRAW;
+                case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
+                    {
+                        int row = (int)lplvcd->nmcd.dwItemSpec;
+                        int col = lplvcd->iSubItem;
+
+                        // Check Save Path (column 1) and New Path (column 2) only
+                        if ((col == 1 || col == 2) && row >= 0 && row < (int)games.size())
+                        {
+                            std::wstring path = (col == 1) ? games[row].savePath : games[row].newPath;
+                            
+                            if (PathExists(path))
+                            {
+                                // Pale desaturated green
+                                lplvcd->clrTextBk = RGB(200, 220, 200);
+                                lplvcd->clrText = RGB(0, 0, 0);
+                                return CDRF_NEWFONT;
+                            }
+                            else if (!path.empty())
+                            {
+                                // Pale desaturated red
+                                lplvcd->clrTextBk = RGB(220, 200, 200);
+                                lplvcd->clrText = RGB(0, 0, 0);
+                                return CDRF_NEWFONT;
+                            }
+                        }
+                        // Set Hidden column (column 3) to white background
+                        else if (col == 3)
+                        {
+                            lplvcd->clrTextBk = RGB(255, 255, 255);
+                            lplvcd->clrText = RGB(0, 0, 0);
+                            return CDRF_NEWFONT;
+                        }
+                        return CDRF_DODEFAULT;
+                    }
+                }
             }
         }
         break;
