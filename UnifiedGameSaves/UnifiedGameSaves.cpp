@@ -3,6 +3,10 @@
 
 #include "framework.h"
 #include "UnifiedGameSaves.h"
+#include <commctrl.h>
+#include <windowsx.h>
+
+#pragma comment(lib, "comctl32.lib")
 
 #define MAX_LOADSTRING 100
 
@@ -10,6 +14,7 @@
 HINSTANCE hInst;                                // current instance
 WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
+HWND hListView;                                 // ListView control handle
 
 // Forward declarations of functions included in this code module:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -105,6 +110,45 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
       return FALSE;
    }
 
+   // Create ListView control
+   hListView = CreateWindowExW(0, WC_LISTVIEWW, L"",
+      WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_AUTOARRANGE,
+      0, 0, 0, 0,
+      hWnd, (HMENU)IDC_LISTVIEW, hInstance, nullptr);
+
+   if (!hListView)
+   {
+      return FALSE;
+   }
+
+   // Enable grid lines
+   ListView_SetExtendedListViewStyle(hListView, LVS_EX_GRIDLINES);
+
+   // Initialize the ListView with columns
+   LVCOLUMNW lvc = { 0 };
+   lvc.mask = LVCF_FMT | LVCF_WIDTH | LVCF_TEXT;
+   lvc.fmt = LVCFMT_LEFT;
+
+   // Add "Game" column
+   lvc.cx = 150;
+   lvc.pszText = const_cast<LPWSTR>(L"Game");
+   ListView_InsertColumn(hListView, 0, &lvc);
+
+   // Add "Save Path" column
+   lvc.cx = 200;
+   lvc.pszText = const_cast<LPWSTR>(L"Save Path");
+   ListView_InsertColumn(hListView, 1, &lvc);
+
+   // Add "New Path" column
+   lvc.cx = 200;
+   lvc.pszText = const_cast<LPWSTR>(L"New Path");
+   ListView_InsertColumn(hListView, 2, &lvc);
+
+   // Add "Hidden" column
+   lvc.cx = 80;
+   lvc.pszText = const_cast<LPWSTR>(L"Hidden");
+   ListView_InsertColumn(hListView, 3, &lvc);
+
    ShowWindow(hWnd, nCmdShow);
    UpdateWindow(hWnd);
 
@@ -139,6 +183,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 break;
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
+            }
+        }
+        break;
+    case WM_SIZE:
+        {
+            int width = GET_X_LPARAM(lParam);
+            int height = GET_Y_LPARAM(lParam);
+            if (hListView)
+            {
+                MoveWindow(hListView, 0, 0, width, height, TRUE);
             }
         }
         break;

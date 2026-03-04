@@ -12,6 +12,7 @@
 #define IDI_UNIFIEDGAMESAVES			107
 #define IDI_SMALL				108
 #define IDC_UNIFIEDGAMESAVES			109
+#define IDC_LISTVIEW                   1001
 #define IDC_MYICON				2
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
