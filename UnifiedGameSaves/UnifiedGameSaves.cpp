@@ -86,6 +86,7 @@ std::wstring GetJunctionTarget(const std::wstring& path);
 void VerifyJunctionStates();
 bool ActivateJunction(HWND hwndOwner, int gameIndex);
 bool DeactivateJunction(HWND hwndOwner, int gameIndex);
+void ToggleHidden(HWND hwndOwner, int gameIndex);
 bool MoveDirectoryContents(const std::wstring& src, const std::wstring& dst);
 bool CreateDirectoryRecursive(const std::wstring& path);
 
@@ -387,6 +388,17 @@ bool ActivateJunction(HWND hwndOwner, int gameIndex)
     }
 
     entry.junctionActive = true;
+
+    // Restore hidden attribute if user previously set it
+    if (entry.hidden)
+    {
+        DWORD attribs = GetFileAttributesW(entry.savePath.c_str());
+        if (attribs != INVALID_FILE_ATTRIBUTES)
+        {
+            SetFileAttributesW(entry.savePath.c_str(), attribs | FILE_ATTRIBUTE_HIDDEN);
+        }
+    }
+
     SaveGamesToFile();
     RefreshListView();
 
@@ -449,11 +461,61 @@ bool DeactivateJunction(HWND hwndOwner, int gameIndex)
     // Remove the now-empty New Path directory
     RemoveDirectoryW(entry.newPath.c_str());
 
+    // If hidden was set, remove the hidden attribute from the restored directory
+    if (entry.hidden)
+    {
+        DWORD attribs = GetFileAttributesW(entry.savePath.c_str());
+        if (attribs != INVALID_FILE_ATTRIBUTES)
+        {
+            SetFileAttributesW(entry.savePath.c_str(), attribs & ~FILE_ATTRIBUTE_HIDDEN);
+        }
+    }
+
     entry.junctionActive = false;
     SaveGamesToFile();
     RefreshListView();
 
     return true;
+}
+
+void ToggleHidden(HWND hwndOwner, int gameIndex)
+{
+    if (gameIndex < 0 || gameIndex >= (int)games.size()) return;
+
+    GameEntry& entry = games[gameIndex];
+
+    if (!entry.hidden)
+    {
+        // Trying to set hidden — only allow if junction is active
+        if (!entry.junctionActive)
+        {
+            MessageBoxW(hwndOwner, L"Junction must be active before hiding the Save Path.", L"Error", MB_OK | MB_ICONERROR);
+            return;
+        }
+
+        // Set hidden attribute on Save Path
+        DWORD attribs = GetFileAttributesW(entry.savePath.c_str());
+        if (attribs != INVALID_FILE_ATTRIBUTES)
+        {
+            SetFileAttributesW(entry.savePath.c_str(), attribs | FILE_ATTRIBUTE_HIDDEN);
+        }
+
+        entry.hidden = true;
+    }
+    else
+    {
+        // Remove hidden attribute from Save Path
+        DWORD attribs = GetFileAttributesW(entry.savePath.c_str());
+        if (attribs != INVALID_FILE_ATTRIBUTES)
+        {
+            SetFileAttributesW(entry.savePath.c_str(), attribs & ~FILE_ATTRIBUTE_HIDDEN);
+        }
+
+        entry.hidden = false;
+    }
+
+    SaveGamesToFile();
+    RefreshListView();
 }
 
 //
@@ -647,11 +709,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                                 }
                                 return CDRF_DODEFAULT;
                             }
-                            // Hidden column: white
+                            // Hidden column: clickable toggle
                             if (col == 3)
                             {
-                                lplvcd->clrTextBk = RGB(255, 255, 255);
-                                lplvcd->clrText = RGB(0, 0, 0);
+                                if (games[row].hidden)
+                                {
+                                    lplvcd->clrTextBk = RGB(200, 220, 200);
+                                    lplvcd->clrText = RGB(0, 0, 0);
+                                }
+                                else if (games[row].junctionActive)
+                                {
+                                    lplvcd->clrTextBk = RGB(255, 255, 255);
+                                    lplvcd->clrText = RGB(0, 0, 200);
+                                }
+                                else
+                                {
+                                    lplvcd->clrTextBk = RGB(255, 255, 255);
+                                    lplvcd->clrText = RGB(180, 180, 180);
+                                }
                                 return CDRF_NEWFONT;
                             }
                             // Junction column
@@ -681,17 +756,23 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 else if (pnmhdr->code == NM_CLICK)
                 {
                     LPNMITEMACTIVATE pnmia = (LPNMITEMACTIVATE)lParam;
-                    if (pnmia->iSubItem == 4 && pnmia->iItem >= 0 &&
-                        pnmia->iItem < (int)games.size())
+                    if (pnmia->iItem >= 0 && pnmia->iItem < (int)games.size())
                     {
-                        if (games[pnmia->iItem].junctionActive)
+                        if (pnmia->iSubItem == 3)
                         {
-                            DeactivateJunction(hWnd, pnmia->iItem);
+                            ToggleHidden(hWnd, pnmia->iItem);
                         }
-                        else if (PathExists(games[pnmia->iItem].savePath) &&
-                                 !games[pnmia->iItem].newPath.empty())
+                        else if (pnmia->iSubItem == 4)
                         {
-                            ActivateJunction(hWnd, pnmia->iItem);
+                            if (games[pnmia->iItem].junctionActive)
+                            {
+                                DeactivateJunction(hWnd, pnmia->iItem);
+                            }
+                            else if (PathExists(games[pnmia->iItem].savePath) &&
+                                     !games[pnmia->iItem].newPath.empty())
+                            {
+                                ActivateJunction(hWnd, pnmia->iItem);
+                            }
                         }
                     }
                 }
