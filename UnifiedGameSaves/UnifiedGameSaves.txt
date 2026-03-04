@@ -1,3 +1,2 @@
-Test Game|C:\TestGame|C:\MyGames\TestGame|1
-NFS Hot Pursuit|C:\Users\beef\OneDrive\Documents\Criterion Games\Need for Speed(TM) Hot Pursuit Remastered|C:\MyGames\NFS Hot Pursuit|0
-Test Game 2|C:\TestGame2|C:\MyGames\Test Game 2|0
+Test Game|C:\TestGame|C:\MyGames\TestGame|0|0
+Test Game 2|C:\TestGame2|C:\MyGames\Test Game 2|0|1

@@ -6,6 +6,7 @@
 #include <commctrl.h>
 #include <windowsx.h>
 #include <shlobj.h>
+#include <winioctl.h>
 #include <string>
 #include <vector>
 #include <fstream>
@@ -13,6 +14,35 @@
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "ole32.lib")
+
+#ifndef REPARSE_DATA_BUFFER_HEADER_SIZE
+typedef struct _REPARSE_DATA_BUFFER {
+    ULONG  ReparseTag;
+    USHORT ReparseDataLength;
+    USHORT Reserved;
+    union {
+        struct {
+            USHORT SubstituteNameOffset;
+            USHORT SubstituteNameLength;
+            USHORT PrintNameOffset;
+            USHORT PrintNameLength;
+            ULONG  Flags;
+            WCHAR  PathBuffer[1];
+        } SymbolicLinkReparseBuffer;
+        struct {
+            USHORT SubstituteNameOffset;
+            USHORT SubstituteNameLength;
+            USHORT PrintNameOffset;
+            USHORT PrintNameLength;
+            WCHAR  PathBuffer[1];
+        } MountPointReparseBuffer;
+        struct {
+            UCHAR DataBuffer[1];
+        } GenericReparseBuffer;
+    } DUMMYUNIONNAME;
+} REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;
+#define REPARSE_DATA_BUFFER_HEADER_SIZE FIELD_OFFSET(REPARSE_DATA_BUFFER, GenericReparseBuffer)
+#endif
 
 #define MAX_LOADSTRING 100
 
@@ -23,6 +53,7 @@ struct GameEntry
     std::wstring savePath;
     std::wstring newPath;
     bool hidden;
+    bool junctionActive;
 };
 
 // Global vector to store game entries
@@ -43,13 +74,20 @@ INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    AddGameDlg(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    RemoveGameDlg(HWND, UINT, WPARAM, LPARAM);
 
-// Helper functions
+ // Helper functions
 void LoadGamesFromFile();
 void SaveGamesToFile();
 void RefreshListView();
 void AddGameToListView(const GameEntry& entry);
 std::wstring BrowseForFolder(HWND hwndOwner, const wchar_t* lpszTitle);
 bool PathExists(const std::wstring& path);
+bool IsJunction(const std::wstring& path);
+std::wstring GetJunctionTarget(const std::wstring& path);
+void VerifyJunctionStates();
+bool ActivateJunction(HWND hwndOwner, int gameIndex);
+bool DeactivateJunction(HWND hwndOwner, int gameIndex);
+bool MoveDirectoryContents(const std::wstring& src, const std::wstring& dst);
+bool CreateDirectoryRecursive(const std::wstring& path);
 
 // Implementation of helper functions
 void LoadGamesFromFile()
@@ -64,7 +102,7 @@ void LoadGamesFromFile()
         if (line.empty()) continue;
         
         std::wistringstream iss(line);
-        std::wstring name, savePath, newPath, hiddenStr;
+        std::wstring name, savePath, newPath, hiddenStr, junctionStr;
         
         if (std::getline(iss, name, L'|') && 
             std::getline(iss, savePath, L'|') &&
@@ -76,6 +114,9 @@ void LoadGamesFromFile()
             entry.savePath = savePath;
             entry.newPath = newPath;
             entry.hidden = (hiddenStr == L"1");
+            entry.junctionActive = false;
+            if (std::getline(iss, junctionStr, L'|'))
+                entry.junctionActive = (junctionStr == L"1");
             games.push_back(entry);
         }
     }
@@ -90,7 +131,8 @@ void SaveGamesToFile()
         file << entry.name << L"|" 
              << entry.savePath << L"|" 
              << entry.newPath << L"|" 
-             << (entry.hidden ? L"1" : L"0") << L"\n";
+             << (entry.hidden ? L"1" : L"0") << L"|"
+             << (entry.junctionActive ? L"1" : L"0") << L"\n";
     }
     file.close();
 }
@@ -125,6 +167,15 @@ void AddGameToListView(const GameEntry& entry)
     item.iSubItem = 3;
     item.pszText = const_cast<LPWSTR>(entry.hidden ? L"Yes" : L"No");
     ListView_SetItem(hListView, &item);
+
+    item.iSubItem = 4;
+    if (entry.junctionActive)
+        item.pszText = const_cast<LPWSTR>(L"Deactivate");
+    else if (PathExists(entry.savePath) && !entry.newPath.empty())
+        item.pszText = const_cast<LPWSTR>(L"Activate");
+    else
+        item.pszText = const_cast<LPWSTR>(L"");
+    ListView_SetItem(hListView, &item);
 }
 
 std::wstring BrowseForFolder(HWND hwndOwner, const wchar_t* lpszTitle)
@@ -154,6 +205,255 @@ bool PathExists(const std::wstring& path)
     if (path.empty()) return false;
     DWORD attribs = GetFileAttributesW(path.c_str());
     return (attribs != INVALID_FILE_ATTRIBUTES && (attribs & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+bool IsJunction(const std::wstring& path)
+{
+    DWORD attribs = GetFileAttributesW(path.c_str());
+    if (attribs == INVALID_FILE_ATTRIBUTES) return false;
+    return (attribs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+std::wstring GetJunctionTarget(const std::wstring& path)
+{
+    std::wstring target;
+    HANDLE hDir = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (hDir == INVALID_HANDLE_VALUE) return target;
+
+    BYTE buffer[MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
+    DWORD bytesReturned = 0;
+    if (DeviceIoControl(hDir, FSCTL_GET_REPARSE_POINT, nullptr, 0,
+        buffer, sizeof(buffer), &bytesReturned, nullptr))
+    {
+        REPARSE_DATA_BUFFER* rdb = reinterpret_cast<REPARSE_DATA_BUFFER*>(buffer);
+        if (rdb->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT)
+        {
+            WCHAR* targetName = rdb->MountPointReparseBuffer.PathBuffer +
+                (rdb->MountPointReparseBuffer.SubstituteNameOffset / sizeof(WCHAR));
+            USHORT targetLen = rdb->MountPointReparseBuffer.SubstituteNameLength / sizeof(WCHAR);
+            target.assign(targetName, targetLen);
+            // Strip the \??\ prefix if present
+            if (target.substr(0, 4) == L"\\??\\")
+                target = target.substr(4);
+        }
+    }
+    CloseHandle(hDir);
+    return target;
+}
+
+void VerifyJunctionStates()
+{
+    bool changed = false;
+    for (auto& entry : games)
+    {
+        bool shouldBeActive = false;
+        if (IsJunction(entry.savePath) && !entry.newPath.empty())
+        {
+            std::wstring target = GetJunctionTarget(entry.savePath);
+            // Normalize: remove trailing backslash for comparison
+            while (!target.empty() && target.back() == L'\\')
+                target.pop_back();
+            std::wstring expected = entry.newPath;
+            while (!expected.empty() && expected.back() == L'\\')
+                expected.pop_back();
+            if (_wcsicmp(target.c_str(), expected.c_str()) == 0)
+                shouldBeActive = true;
+        }
+        if (entry.junctionActive != shouldBeActive)
+        {
+            entry.junctionActive = shouldBeActive;
+            changed = true;
+        }
+    }
+    if (changed)
+        SaveGamesToFile();
+}
+
+static bool MoveDirectoryContents(const std::wstring& src, const std::wstring& dst)
+{
+    std::wstring searchPath = src + L"\\*";
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW(searchPath.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return true;
+
+    bool ok = true;
+    do
+    {
+        std::wstring name = fd.cFileName;
+        if (name == L"." || name == L"..") continue;
+
+        std::wstring srcItem = src + L"\\" + name;
+        std::wstring dstItem = dst + L"\\" + name;
+
+        if (!MoveFileW(srcItem.c_str(), dstItem.c_str()))
+        {
+            ok = false;
+            break;
+        }
+    } while (FindNextFileW(hFind, &fd));
+
+    FindClose(hFind);
+    return ok;
+}
+
+static bool CreateDirectoryRecursive(const std::wstring& path)
+{
+    if (PathExists(path)) return true;
+
+    // Find parent
+    size_t pos = path.find_last_of(L"\\/"); 
+    if (pos != std::wstring::npos && pos > 0)
+    {
+        std::wstring parent = path.substr(0, pos);
+        if (!CreateDirectoryRecursive(parent)) return false;
+    }
+    return CreateDirectoryW(path.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
+bool ActivateJunction(HWND hwndOwner, int gameIndex)
+{
+    if (gameIndex < 0 || gameIndex >= (int)games.size()) return false;
+
+    GameEntry& entry = games[gameIndex];
+
+    if (entry.savePath.empty() || entry.newPath.empty())
+    {
+        MessageBoxW(hwndOwner, L"Both Save Path and New Path must be set.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    if (!PathExists(entry.savePath))
+    {
+        MessageBoxW(hwndOwner, L"Save Path does not exist.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    if (IsJunction(entry.savePath))
+    {
+        MessageBoxW(hwndOwner, L"Save Path is already a junction.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Create New Path if it doesn't exist
+    if (!CreateDirectoryRecursive(entry.newPath))
+    {
+        MessageBoxW(hwndOwner, L"Failed to create New Path directory.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Move contents from Save Path to New Path
+    if (!MoveDirectoryContents(entry.savePath, entry.newPath))
+    {
+        MessageBoxW(hwndOwner, L"Failed to move directory contents.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Remove the now-empty Save Path directory
+    if (!RemoveDirectoryW(entry.savePath.c_str()))
+    {
+        MessageBoxW(hwndOwner, L"Failed to remove Save Path directory.\nSome files may still be in use.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Create junction: mklink /J "savePath" "newPath"
+    wchar_t cmdLine[1024];
+    swprintf_s(cmdLine, L"cmd.exe /C mklink /J \"%s\" \"%s\"", entry.savePath.c_str(), entry.newPath.c_str());
+
+    STARTUPINFOW si2 = { 0 };
+    PROCESS_INFORMATION pi2 = { 0 };
+    si2.cb = sizeof(si2);
+    si2.dwFlags = STARTF_USESHOWWINDOW;
+    si2.wShowWindow = SW_HIDE;
+
+    if (!CreateProcessW(nullptr, cmdLine, nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &si2, &pi2))
+    {
+        MessageBoxW(hwndOwner, L"Failed to create junction.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    WaitForSingleObject(pi2.hProcess, INFINITE);
+
+    DWORD exitCode = 1;
+    GetExitCodeProcess(pi2.hProcess, &exitCode);
+    CloseHandle(pi2.hProcess);
+    CloseHandle(pi2.hThread);
+
+    if (exitCode != 0)
+    {
+        MessageBoxW(hwndOwner, L"Junction creation command failed.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    entry.junctionActive = true;
+    SaveGamesToFile();
+    RefreshListView();
+
+    return true;
+}
+
+bool DeactivateJunction(HWND hwndOwner, int gameIndex)
+{
+    if (gameIndex < 0 || gameIndex >= (int)games.size()) return false;
+
+    GameEntry& entry = games[gameIndex];
+
+    if (!IsJunction(entry.savePath))
+    {
+        MessageBoxW(hwndOwner, L"Save Path is not a junction.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    if (!PathExists(entry.newPath))
+    {
+        MessageBoxW(hwndOwner, L"New Path does not exist. Cannot restore.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Remove the junction (it's a directory reparse point, rmdir removes it)
+    wchar_t cmdLine[1024];
+    swprintf_s(cmdLine, L"cmd.exe /C rmdir \"%s\"", entry.savePath.c_str());
+
+    STARTUPINFOW si = { 0 };
+    PROCESS_INFORMATION pi = { 0 };
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    if (!CreateProcessW(nullptr, cmdLine, nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+    {
+        MessageBoxW(hwndOwner, L"Failed to remove junction.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    // Create the Save Path directory again
+    if (!CreateDirectoryW(entry.savePath.c_str(), nullptr))
+    {
+        MessageBoxW(hwndOwner, L"Failed to recreate Save Path directory.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Move contents back from New Path to Save Path
+    if (!MoveDirectoryContents(entry.newPath, entry.savePath))
+    {
+        MessageBoxW(hwndOwner, L"Failed to move directory contents back.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    // Remove the now-empty New Path directory
+    RemoveDirectoryW(entry.newPath.c_str());
+
+    entry.junctionActive = false;
+    SaveGamesToFile();
+    RefreshListView();
+
+    return true;
 }
 
 //
@@ -215,8 +515,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
       return FALSE;
    }
 
-   // Enable grid lines
-   ListView_SetExtendedListViewStyle(hListView, LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
+   // Enable grid lines and full row select for subitem click detection
+   ListView_SetExtendedListViewStyle(hListView, LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT);
 
    // Initialize the ListView with columns
    LVCOLUMNW lvc = { 0 };
@@ -243,8 +543,14 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    lvc.pszText = const_cast<LPWSTR>(L"Hidden");
    ListView_InsertColumn(hListView, 3, &lvc);
 
+   // Add "Junction" column
+   lvc.cx = 80;
+   lvc.pszText = const_cast<LPWSTR>(L"Junction");
+   ListView_InsertColumn(hListView, 4, &lvc);
+
    // Load games from file
    LoadGamesFromFile();
+   VerifyJunctionStates();
    RefreshListView();
 
    ShowWindow(hWnd, nCmdShow);
@@ -293,48 +599,100 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_NOTIFY:
         {
             LPNMHDR pnmhdr = (LPNMHDR)lParam;
-            if (pnmhdr->idFrom == IDC_LISTVIEW && pnmhdr->code == NM_CUSTOMDRAW)
+            if (pnmhdr->idFrom == IDC_LISTVIEW)
             {
-                LPNMLVCUSTOMDRAW lplvcd = (LPNMLVCUSTOMDRAW)lParam;
-                switch (lplvcd->nmcd.dwDrawStage)
+                if (pnmhdr->code == NM_CUSTOMDRAW)
                 {
-                case CDDS_PREPAINT:
-                    return CDRF_NOTIFYITEMDRAW;
-                case CDDS_ITEMPREPAINT:
-                    return CDRF_NOTIFYSUBITEMDRAW;
-                case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
+                    LPNMLVCUSTOMDRAW lplvcd = (LPNMLVCUSTOMDRAW)lParam;
+                    switch (lplvcd->nmcd.dwDrawStage)
                     {
-                        int row = (int)lplvcd->nmcd.dwItemSpec;
-                        int col = lplvcd->iSubItem;
+                    case CDDS_PREPAINT:
+                        return CDRF_NOTIFYITEMDRAW;
+                    case CDDS_ITEMPREPAINT:
+                        return CDRF_NOTIFYSUBITEMDRAW;
+                    case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
+                        {
+                            int row = (int)lplvcd->nmcd.dwItemSpec;
+                            int col = lplvcd->iSubItem;
 
-                        // Check Save Path (column 1) and New Path (column 2) only
-                        if ((col == 1 || col == 2) && row >= 0 && row < (int)games.size())
-                        {
-                            std::wstring path = (col == 1) ? games[row].savePath : games[row].newPath;
-                            
-                            if (PathExists(path))
+                            if (row < 0 || row >= (int)games.size())
+                                return CDRF_DODEFAULT;
+
+                            // Game column: green if junction is active
+                            if (col == 0)
                             {
-                                // Pale desaturated green
-                                lplvcd->clrTextBk = RGB(200, 220, 200);
+                                if (games[row].junctionActive)
+                                {
+                                    lplvcd->clrTextBk = RGB(200, 220, 200);
+                                    lplvcd->clrText = RGB(0, 0, 0);
+                                    return CDRF_NEWFONT;
+                                }
+                                return CDRF_DODEFAULT;
+                            }
+                            // Save Path and New Path columns
+                            if (col == 1 || col == 2)
+                            {
+                                std::wstring path = (col == 1) ? games[row].savePath : games[row].newPath;
+                                if (PathExists(path))
+                                {
+                                    lplvcd->clrTextBk = RGB(200, 220, 200);
+                                    lplvcd->clrText = RGB(0, 0, 0);
+                                    return CDRF_NEWFONT;
+                                }
+                                else if (!path.empty())
+                                {
+                                    lplvcd->clrTextBk = RGB(220, 200, 200);
+                                    lplvcd->clrText = RGB(0, 0, 0);
+                                    return CDRF_NEWFONT;
+                                }
+                                return CDRF_DODEFAULT;
+                            }
+                            // Hidden column: white
+                            if (col == 3)
+                            {
+                                lplvcd->clrTextBk = RGB(255, 255, 255);
                                 lplvcd->clrText = RGB(0, 0, 0);
                                 return CDRF_NEWFONT;
                             }
-                            else if (!path.empty())
+                            // Junction column
+                            if (col == 4)
                             {
-                                // Pale desaturated red
-                                lplvcd->clrTextBk = RGB(220, 200, 200);
-                                lplvcd->clrText = RGB(0, 0, 0);
+                                if (games[row].junctionActive)
+                                {
+                                    lplvcd->clrTextBk = RGB(220, 200, 200);
+                                    lplvcd->clrText = RGB(150, 0, 0);
+                                }
+                                else if (PathExists(games[row].savePath) && !games[row].newPath.empty())
+                                {
+                                    lplvcd->clrTextBk = RGB(255, 255, 255);
+                                    lplvcd->clrText = RGB(0, 0, 200);
+                                }
+                                else
+                                {
+                                    lplvcd->clrTextBk = RGB(255, 255, 255);
+                                    lplvcd->clrText = RGB(180, 180, 180);
+                                }
                                 return CDRF_NEWFONT;
                             }
+                            return CDRF_DODEFAULT;
                         }
-                        // Set Hidden column (column 3) to white background
-                        else if (col == 3)
+                    }
+                }
+                else if (pnmhdr->code == NM_CLICK)
+                {
+                    LPNMITEMACTIVATE pnmia = (LPNMITEMACTIVATE)lParam;
+                    if (pnmia->iSubItem == 4 && pnmia->iItem >= 0 &&
+                        pnmia->iItem < (int)games.size())
+                    {
+                        if (games[pnmia->iItem].junctionActive)
                         {
-                            lplvcd->clrTextBk = RGB(255, 255, 255);
-                            lplvcd->clrText = RGB(0, 0, 0);
-                            return CDRF_NEWFONT;
+                            DeactivateJunction(hWnd, pnmia->iItem);
                         }
-                        return CDRF_DODEFAULT;
+                        else if (PathExists(games[pnmia->iItem].savePath) &&
+                                 !games[pnmia->iItem].newPath.empty())
+                        {
+                            ActivateJunction(hWnd, pnmia->iItem);
+                        }
                     }
                 }
             }
@@ -437,6 +795,7 @@ INT_PTR CALLBACK AddGameDlg(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPara
             entry.savePath = savePathBuffer;
             entry.newPath = newPathBuffer;
             entry.hidden = (isHidden == BST_CHECKED);
+            entry.junctionActive = false; // Default to false for new entries
 
             games.push_back(entry);
             SaveGamesToFile();
