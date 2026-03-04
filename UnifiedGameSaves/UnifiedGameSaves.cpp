@@ -640,12 +640,12 @@ std::wstring GetJunctionTarget(const std::wstring& path)
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (hDir == INVALID_HANDLE_VALUE) return target;
 
-    BYTE buffer[MAXIMUM_REPARSE_DATA_BUFFER_SIZE]{};
+    std::unique_ptr<BYTE[]> buffer(new BYTE[MAXIMUM_REPARSE_DATA_BUFFER_SIZE]);
     DWORD bytesReturned = 0;
     if (DeviceIoControl(hDir, FSCTL_GET_REPARSE_POINT, nullptr, 0,
-        buffer, sizeof(buffer), &bytesReturned, nullptr))
+        buffer.get(), MAXIMUM_REPARSE_DATA_BUFFER_SIZE, &bytesReturned, nullptr))
     {
-        REPARSE_DATA_BUFFER* rdb = reinterpret_cast<REPARSE_DATA_BUFFER*>(buffer);
+        REPARSE_DATA_BUFFER* rdb = reinterpret_cast<REPARSE_DATA_BUFFER*>(buffer.get());
         if (rdb->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT)
         {
             WCHAR* targetName = rdb->MountPointReparseBuffer.PathBuffer +
