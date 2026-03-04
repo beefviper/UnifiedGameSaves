@@ -12,6 +12,7 @@
 #include <sstream>
 
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "ole32.lib")
 
 #define MAX_LOADSTRING 100
 
@@ -47,6 +48,7 @@ void LoadGamesFromFile();
 void SaveGamesToFile();
 void RefreshListView();
 void AddGameToListView(const GameEntry& entry);
+std::wstring BrowseForFolder(HWND hwndOwner, const wchar_t* lpszTitle);
 
 // Implementation of helper functions
 void LoadGamesFromFile()
@@ -122,6 +124,28 @@ void AddGameToListView(const GameEntry& entry)
     item.iSubItem = 3;
     item.pszText = const_cast<LPWSTR>(entry.hidden ? L"Yes" : L"No");
     ListView_SetItem(hListView, &item);
+}
+
+std::wstring BrowseForFolder(HWND hwndOwner, const wchar_t* lpszTitle)
+{
+    std::wstring result;
+    BROWSEINFOW bi = { 0 };
+    bi.hwndOwner = hwndOwner;
+    bi.lpszTitle = lpszTitle;
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+    if (pidl != nullptr)
+    {
+        wchar_t path[MAX_PATH];
+        if (SHGetPathFromIDListW(pidl, path))
+        {
+            result = path;
+        }
+        CoTaskMemFree(pidl);
+    }
+
+    return result;
 }
 
 //
@@ -315,7 +339,25 @@ INT_PTR CALLBACK AddGameDlg(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPara
         return (INT_PTR)TRUE;
 
     case WM_COMMAND:
-        if (LOWORD(wParam) == IDOK)
+        if (LOWORD(wParam) == IDC_BROWSE_SAVEPATH)
+        {
+            std::wstring folder = BrowseForFolder(hDlg, L"Select Save Path");
+            if (!folder.empty())
+            {
+                SetDlgItemTextW(hDlg, IDC_SAVEPATH_INPUT, folder.c_str());
+            }
+            return (INT_PTR)TRUE;
+        }
+        else if (LOWORD(wParam) == IDC_BROWSE_NEWPATH)
+        {
+            std::wstring folder = BrowseForFolder(hDlg, L"Select New Path");
+            if (!folder.empty())
+            {
+                SetDlgItemTextW(hDlg, IDC_NEWPATH_INPUT, folder.c_str());
+            }
+            return (INT_PTR)TRUE;
+        }
+        else if (LOWORD(wParam) == IDOK)
         {
             wchar_t nameBuffer[256] = { 0 };
             wchar_t savePathBuffer[256] = { 0 };

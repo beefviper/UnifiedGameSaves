@@ -22,6 +22,8 @@
 #define IDC_NEWPATH_INPUT          1004
 #define IDC_HIDDEN_CHECK           1005
 #define IDC_GAME_LIST              1006
+#define IDC_BROWSE_SAVEPATH        1007
+#define IDC_BROWSE_NEWPATH         1008
 #define IDC_MYICON				2
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
