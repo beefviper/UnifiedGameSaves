@@ -29,7 +29,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    hInst = hInstance;
 
    HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
-      CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+      CW_USEDEFAULT, 0, 900, 600, nullptr, nullptr, hInstance, nullptr);
 
    if (!hWnd)
    {
@@ -52,23 +52,23 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    lvc.mask = LVCF_FMT | LVCF_WIDTH | LVCF_TEXT;
    lvc.fmt = LVCFMT_LEFT;
 
-   lvc.cx = 150;
+   lvc.cx = 120;
    lvc.pszText = const_cast<LPWSTR>(L"Game");
    ListView_InsertColumn(hListView, 0, &lvc);
 
-   lvc.cx = 200;
+   lvc.cx = 280;
    lvc.pszText = const_cast<LPWSTR>(L"Save Path");
    ListView_InsertColumn(hListView, 1, &lvc);
 
-   lvc.cx = 200;
+   lvc.cx = 280;
    lvc.pszText = const_cast<LPWSTR>(L"New Path");
    ListView_InsertColumn(hListView, 2, &lvc);
 
-   lvc.cx = 80;
+   lvc.cx = 100;
    lvc.pszText = const_cast<LPWSTR>(L"Hidden");
    ListView_InsertColumn(hListView, 3, &lvc);
 
-   lvc.cx = 80;
+   lvc.cx = 100;
    lvc.pszText = const_cast<LPWSTR>(L"Junction");
    ListView_InsertColumn(hListView, 4, &lvc);
 
@@ -107,6 +107,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             default:
                 return DefWindowProc(hWnd, message, wParam, lParam);
             }
+        }
+        break;
+    case WM_GETMINMAXINFO:
+        {
+            MINMAXINFO* pMinMaxInfo = reinterpret_cast<MINMAXINFO*>(lParam);
+            // Minimum window width = sum of all column minimum widths
+            // 5 columns * 80px = 400px minimum content width
+            // Add ~20px for scrollbar and borders
+            pMinMaxInfo->ptMinTrackSize.x = 420;
+            pMinMaxInfo->ptMinTrackSize.y = 200;
         }
         break;
     case WM_NOTIFY:
@@ -224,6 +234,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                                 ActivateJunction(hWnd, pnmia->iItem);
                             }
                         }
+                        else if (pnmia->iSubItem <= 2)
+                        {
+                            // Start editing for Game, Save Path, or New Path columns
+                            StartEditCell(pnmia->iItem, pnmia->iSubItem);
+                        }
                     }
                 }
             }
@@ -236,6 +251,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             if (hListView)
             {
                 MoveWindow(hListView, 0, 0, width, height, TRUE);
+                ResizeListViewColumns(width);
             }
         }
         break;
@@ -849,4 +865,166 @@ void ToggleHidden(HWND hwndOwner, int gameIndex)
 
     SaveGamesToFile();
     RefreshListView();
+}
+
+void ResizeListViewColumns(int totalWidth)
+{
+    if (totalWidth <= 0 || !hListView) return;
+
+    // Calculate total current width
+    int totalCurrentWidth = 0;
+    for (int i = 0; i < NUM_COLUMNS; ++i)
+    {
+        totalCurrentWidth += columnWidths[i];
+    }
+
+    // Define maximum widths for each column
+    // Path columns have no upper limit (0 = unbounded)
+    // Hidden/Junction are narrower with reasonable caps
+    constexpr int maxWidths[NUM_COLUMNS] = { 0, 0, 0, 120, 120 };
+
+    // Distribute the available width proportionally
+    int remainingWidth = totalWidth;
+    for (int i = 0; i < NUM_COLUMNS; ++i)
+    {
+        int newWidth;
+        if (i == NUM_COLUMNS - 1)
+        {
+            // Last column gets remaining width
+            newWidth = remainingWidth;
+        }
+        else
+        {
+            // Calculate proportional width
+            newWidth = (columnWidths[i] * totalWidth) / totalCurrentWidth;
+        }
+
+        // Apply minimum width constraint
+        if (newWidth < MIN_COLUMN_WIDTH)
+            newWidth = MIN_COLUMN_WIDTH;
+        
+        // Apply maximum width constraint (0 = unbounded)
+        if (maxWidths[i] > 0 && newWidth > maxWidths[i])
+            newWidth = maxWidths[i];
+
+        remainingWidth -= newWidth;
+
+        // Ensure we don't exceed available width
+        if (remainingWidth < 0)
+        {
+            newWidth += remainingWidth;
+            remainingWidth = 0;
+        }
+
+        columnWidths[i] = newWidth;
+        ListView_SetColumnWidth(hListView, i, newWidth);
+    }
+}
+
+void StartEditCell(int row, int col)
+{
+    if (row < 0 || row >= (int)games.size() || col < 0 || col > 2) return;
+    if (hEditControl != nullptr) EndEditCell(false);
+
+    RECT rcItem;
+    ListView_GetItemRect(hListView, row, &rcItem, LVIR_BOUNDS);
+
+    // Calculate column position
+    RECT rcSubItem = rcItem;
+    int colX = 0;
+    for (int i = 0; i < col; ++i)
+    {
+        colX += ListView_GetColumnWidth(hListView, i);
+    }
+    rcSubItem.left = rcItem.left + colX;
+    rcSubItem.right = rcSubItem.left + ListView_GetColumnWidth(hListView, col);
+
+    // Get current value
+    std::wstring currentValue;
+    if (col == 0)
+        currentValue = games[row].name;
+    else if (col == 1)
+        currentValue = games[row].savePath;
+    else if (col == 2)
+        currentValue = games[row].newPath;
+
+    // Position edit control to match cell, offset up slightly for text alignment
+    int x = rcSubItem.left;
+    int y = rcSubItem.top - 2;
+    int width = (rcSubItem.right - rcSubItem.left);
+    int height = (rcSubItem.bottom - rcSubItem.top) + 2;
+
+    // Create edit control
+    hEditControl = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", currentValue.c_str(),
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        x, y, width, height,
+        hListView, nullptr, GetModuleHandleW(nullptr), nullptr);
+
+    if (hEditControl)
+    {
+        editingRow = row;
+        editingCol = col;
+        oldEditProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hEditControl, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(EditControlProc)));
+        
+        // Apply ListView's font to the edit control
+        HFONT hFont = reinterpret_cast<HFONT>(SendMessageW(hListView, WM_GETFONT, 0, 0));
+        if (hFont)
+        {
+            SendMessageW(hEditControl, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), FALSE);
+        }
+        
+        SetFocus(hEditControl);
+        SendMessageW(hEditControl, EM_SETSEL, 0, -1);
+    }
+}
+
+void EndEditCell(bool save)
+{
+    if (hEditControl == nullptr || editingRow < 0) return;
+
+    if (save && editingRow < (int)games.size())
+    {
+        wchar_t buffer[512] = { 0 };
+        GetWindowTextW(hEditControl, buffer, 512);
+        std::wstring newValue(buffer);
+
+        if (editingCol == 0 && !newValue.empty())
+            games[editingRow].name = newValue;
+        else if (editingCol == 1)
+            games[editingRow].savePath = newValue;
+        else if (editingCol == 2)
+            games[editingRow].newPath = newValue;
+
+        SaveGamesToFile();
+        RefreshListView();
+    }
+
+    DestroyWindow(hEditControl);
+    hEditControl = nullptr;
+    editingRow = -1;
+    editingCol = -1;
+    SetFocus(hListView);
+}
+
+LRESULT CALLBACK EditControlProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_KEYDOWN:
+        if (wParam == VK_RETURN)
+        {
+            EndEditCell(true);
+            return 0;
+        }
+        else if (wParam == VK_ESCAPE)
+        {
+            EndEditCell(false);
+            return 0;
+        }
+        break;
+    case WM_KILLFOCUS:
+        EndEditCell(true);
+        return 0;
+    }
+    return CallWindowProcW(oldEditProc, hWnd, message, wParam, lParam);
 }

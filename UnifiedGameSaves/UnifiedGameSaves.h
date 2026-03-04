@@ -33,6 +33,7 @@ typedef struct _REPARSE_DATA_BUFFER {
 
 constexpr int MAX_LOADSTRING = 100;
 
+// Data structure for a game entry
 struct GameEntry
 {
     std::wstring name;
@@ -50,8 +51,20 @@ const wchar_t* SAVES_FILE = L"UnifiedGameSaves.txt";
 HINSTANCE hInst;
 WCHAR szTitle[MAX_LOADSTRING];
 WCHAR szWindowClass[MAX_LOADSTRING];
-HWND hListView;
+HWND hListView;                                 // ListView control handle
 
+// Column width management
+constexpr int MIN_COLUMN_WIDTH = 80;
+constexpr int NUM_COLUMNS = 5;
+int columnWidths[NUM_COLUMNS] = { 120, 280, 280, 100, 100 };
+
+// In-place editing
+HWND hEditControl = nullptr;
+int editingRow = -1;
+int editingCol = -1;
+WNDPROC oldEditProc = nullptr;
+
+// Forward declarations of functions included in this code module:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -59,6 +72,7 @@ INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    AddGameDlg(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    RemoveGameDlg(HWND, UINT, WPARAM, LPARAM);
 
+// Helper functions
 void LoadGamesFromFile();
 void SaveGamesToFile();
 void RefreshListView();
@@ -73,3 +87,7 @@ bool DeactivateJunction(HWND hwndOwner, int gameIndex);
 void ToggleHidden(HWND hwndOwner, int gameIndex);
 bool MoveDirectoryContents(const std::wstring& src, const std::wstring& dst);
 bool CreateDirectoryRecursive(const std::wstring& path);
+void ResizeListViewColumns(int totalWidth);
+void StartEditCell(int row, int col);
+void EndEditCell(bool save);
+LRESULT CALLBACK EditControlProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
