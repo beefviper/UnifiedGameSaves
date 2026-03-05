@@ -977,7 +977,7 @@ void StartEditCell(int row, int col)
     if (row < 0 || row >= (int)games.size() || col < 0 || col > 2) return;
     if (hEditControl != nullptr) EndEditCell(false);
 
-    RECT rcItem;
+    RECT rcItem{};
     ListView_GetItemRect(hListView, row, &rcItem, LVIR_BOUNDS);
 
     // Calculate column position
