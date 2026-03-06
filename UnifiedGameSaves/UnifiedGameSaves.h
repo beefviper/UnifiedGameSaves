@@ -46,7 +46,7 @@ struct GameEntry
 };
 
 std::vector<GameEntry> games;
-const wchar_t* SAVES_FILE = L"UnifiedGameSaves.txt";
+std::wstring savesFilePath;
 
 HINSTANCE hInst;
 WCHAR szTitle[MAX_LOADSTRING];

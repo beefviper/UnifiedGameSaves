@@ -483,7 +483,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    // TODO: Place code here.
+    // Resolve saves file path next to the executable
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring exeDir(exePath);
+    size_t lastSlash = exeDir.find_last_of(L"\\/");
+    if (lastSlash != std::wstring::npos)
+        exeDir = exeDir.substr(0, lastSlash + 1);
+    savesFilePath = exeDir + L"UnifiedGameSaves.txt";
 
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_UNIFIEDGAMESAVES, szWindowClass, MAX_LOADSTRING);
@@ -513,7 +520,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 void LoadGamesFromFile()
 {
     games.clear();
-    std::wifstream file(SAVES_FILE);
+    std::wifstream file(savesFilePath);
     if (!file.is_open()) return;
 
     std::wstring line;
@@ -545,7 +552,7 @@ void LoadGamesFromFile()
 
 void SaveGamesToFile()
 {
-    std::wofstream file(SAVES_FILE);
+    std::wofstream file(savesFilePath);
     for (const auto& entry : games)
     {
         file << entry.name << L"|"
