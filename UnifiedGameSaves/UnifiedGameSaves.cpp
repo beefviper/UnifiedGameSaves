@@ -448,6 +448,7 @@ INT_PTR CALLBACK RemoveGameDlg(HWND hDlg, UINT message, WPARAM wParam, LPARAM lP
                                 }
                             }
                             
+
                             // Clean up the new path directory
                             RemoveDirectoryW(entry.newPath.c_str());
                         }
@@ -703,6 +704,16 @@ static bool MoveDirectoryContents(const std::wstring& src, const std::wstring& d
         std::wstring srcItem = src + L"\\" + name;
         std::wstring dstItem = dst + L"\\" + name;
 
+        // Clear read-only/hidden/system on the source item before moving
+        DWORD attrs = GetFileAttributesW(srcItem.c_str());
+        if (attrs != INVALID_FILE_ATTRIBUTES &&
+            (attrs & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_READONLY)))
+        {
+            DWORD newAttrs = attrs & ~(FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_READONLY);
+            if (newAttrs == 0) newAttrs = FILE_ATTRIBUTE_NORMAL;
+            SetFileAttributesW(srcItem.c_str(), newAttrs);
+        }
+
         if (!MoveFileW(srcItem.c_str(), dstItem.c_str()))
         {
             ok = false;
@@ -719,6 +730,7 @@ static bool CreateDirectoryRecursive(const std::wstring& path)
     if (PathExists(path)) return true;
 
     size_t pos = path.find_last_of(L"\\/");
+
     if (pos != std::wstring::npos && pos > 0)
     {
         std::wstring parent = path.substr(0, pos);
@@ -761,6 +773,15 @@ bool ActivateJunction(HWND hwndOwner, int gameIndex)
     {
         MessageBoxW(hwndOwner, L"Failed to move directory contents.", L"Error", MB_OK | MB_ICONERROR);
         return false;
+    }
+
+    // Strip read-only/hidden/system attributes from the directory before removing
+    DWORD dirAttrs = GetFileAttributesW(entry.savePath.c_str());
+    if (dirAttrs != INVALID_FILE_ATTRIBUTES)
+    {
+        dirAttrs &= ~(FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+        if (dirAttrs == 0) dirAttrs = FILE_ATTRIBUTE_NORMAL;
+        SetFileAttributesW(entry.savePath.c_str(), dirAttrs);
     }
 
     if (!RemoveDirectoryW(entry.savePath.c_str()))
