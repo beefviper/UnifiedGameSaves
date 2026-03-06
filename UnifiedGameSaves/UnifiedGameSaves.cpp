@@ -527,7 +527,7 @@ void LoadGamesFromFile()
         if (std::getline(iss, name, L'|') &&
             std::getline(iss, savePath, L'|') &&
             std::getline(iss, newPath, L'|') &&
-            std::getline(iss, hiddenStr))
+            std::getline(iss, hiddenStr, L'|'))
         {
             GameEntry entry;
             entry.name = name;
